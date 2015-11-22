@@ -177,14 +177,16 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(res_body)
         self.wfile.flush()
 
-        with self.lock:
-            self.save_handler(req, req_body, res, res_body_plain)
+        self.save_handler(req, req_body, res, res_body_plain)
 
     do_HEAD = do_GET
     do_POST = do_GET
     do_OPTIONS = do_GET
+    do_PROPFIND = do_GET
+    do_REPORT = do_GET
 
     def filter_headers(self, headers):
+        return headers
         # http://tools.ietf.org/html/rfc2616#section-13.5.1
         hop_by_hop = ('connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade')
         for k in hop_by_hop:
@@ -316,7 +318,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         pass
 
     def save_handler(self, req, req_body, res, res_body):
-        self.print_info(req, req_body, res, res_body)
+        with self.lock:
+            self.print_info(req, req_body, res, res_body)
 
 
 def test(HandlerClass=ProxyRequestHandler, ServerClass=ThreadingHTTPServer, protocol="HTTP/1.1"):
