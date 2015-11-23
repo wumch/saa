@@ -42,7 +42,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.us_rbuf = 256 << 10
         self.ds_rbuf = 256 << 10
         print(self.aliases)
-        BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
+		BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
 
     def relay(self):
         try:
@@ -146,8 +146,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             conn.close()
 
         if should_trans:
-            if content_type is not None:
-                body = self.trans(content_type, body, charset) or body
+            body = self.trans(content_type, body, charset) or body
             self.wfile.write(headers)
             self.wfile.write('\r\n\r\n')
             self.wfile.write(body)
