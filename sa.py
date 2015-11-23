@@ -52,67 +52,17 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             addr = dest.split(':')
             port = int(addr[1]) if len(addr) == 2 else 80
             return self.send_request(addr[0], port)
-
-
-            # req_content_length = int(self.headers.get('Content-Length', 0))
-            # req_body = self.rfile.read(req_content_length) \
-            #     if req_content_length else None
-            #
-            # if 'Proxy-Connection' in self.headers:
-            #     self.keep_alive = 'keep-alive' == \
-            #         self.headers.get('Proxy-Connection', '').lower()
-            # self.filter_headers(self.headers)
-
-            self.send_request(addr, port)
-
-            # upstream.request(self.command, self.path, req_body, dict(self.headers))
-            rep = upstream.getresponse()
-            print("status-code:[%d]" % rep.status)
-
-            rep_body_transed = False
-            rep_body = None
-            if self.should_trans(rep):
-                rep_body = rep.read()
-                if rep_body:
-                    rep_body_transed = self.trans(rep, rep_body)
-                    if rep_body_transed is not None and rep.msg.get('Conten'):
-                        rep.msg['Content-Length'] = str(len(rep_body_transed))
-
-            self.wfile.write('%s %d %s\r\n' %
-                (self.protocol_version, rep.status, rep.reason))
-            for header in rep.msg.headers:
-                self.wfile.write(header)
-            self.end_headers()
-
-            if rep_body_transed is False:
-                while True:
-                    segment = rep.read(self.us_rbuf)
-                    if not segment:
-                        break
-                    self.wfile.write(segment)
-            elif rep_body_transed is None:
-                if rep_body:
-                    self.wfile.write(rep_body)
-            else:
-                self.wfile.write(rep_body_transed)
-            self.wfile.flush()
-
-            if not self.keep_alive:
-                self.wfile.close()
-
-            # print 'req.command:[%s]\nreq.headers:[%s]\nreq.body:[%s]\nrep.headers:[%s]\nrep.body:[%s]\n' % \
-            # (self.command, self.headers, req_body, rep.msg.headers, rep_body_transed or rep_body)
-
         except ValueError, e:
-            self.send_error(400)
+            print('ValueError(%s)' % e.message)
+            self.send_error(402)
         except Exception, e:
+            print('Exception(%s)' % e.message)
             self.send_error(500)
 
     def filter_headers(self, headers):
-        # for name in ('connection', 'keep-alive', 'proxy-authenticate',
-        #         'proxy-authorization', 'proxy-connection', 'te', 'trailers',
-        #         'upgrade'):
-        for name in ('proxy-connection', 'Proxy-Connection'):
+        for name in ('connection', 'keep-alive', 'proxy-authenticate',
+                'proxy-authorization', 'proxy-connection', 'te', 'trailers',
+                'upgrade', 'Proxy-Connection'):
             if name in headers:
                 del headers[name]
 
@@ -125,13 +75,6 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         elif content_type == 'text/plain':
             return self.trans_text(rep_body, charset)
 
-    def should_trans_(self, rep):
-        return False
-        if self.command in ('REPORT', 'PROPFIND'):   # maybe blame
-            content_type = rep.msg.get('Content-Type').lower()
-            return content_type.startswith('text/xml') or \
-                content_type.startswith('text/plain')
-
     def send_request(self, host, port):
         """
         :type conn: httplib.HTTPConnection
@@ -142,13 +85,19 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         url = urlparse.urlsplit(self.path)
         path = (url.path + '?' + url.query) if url.query else url.path
         buffer.append('%s %s %s\r\n' % (self.command, path, self.protocol_version))
+        line = ''
         for line in self.headers.headers:
-            if not line.startswith('Proxy-Connection:'):
+            if not line.startswith('Proxy-Connection: ') and not line.startswith('Transfer-Encoding: '):
                 buffer.append(line)
-        buffer.append('\r\n')
+        if not line.endswith('\r\n\r\n'):
+            if line.endswith('\r\n'):
+                buffer.append('\r\n')
+            else:
+                buffer.append('\r\n\r\n')
         conn.send(''.join(buffer))
         del buffer[:]
         content_length = int(self.headers.get('Content-Length', 0))
+        print('request-headers(%s):\n[%s]' % (self.command, ''.join(self.headers.headers)))
         if content_length:
             if content_length < self.ds_rbuf:
                 conn.send(self.rfile.read(content_length))
@@ -157,78 +106,46 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                     conn.send(self.rfile.read(min(content_length, self.ds_rbuf)))
                     content_length -= self.ds_rbuf
 
-        content_length = -1
-        remain = -1
         content = ''
-        headers = ''
-        body = ''
-        should_trans = -1
         header_end = -1
-        header_sent = False
-        content_type = charset = None
-
         while header_end == -1:     # 接收 header
-            content += conn.recv(self.us_rbuf if remain == -1 else min(self.us_rbuf, remain))
-            header_end = content.find('\r\n\r\n')
+            segment = conn.recv(self.us_rbuf)
+            if not segment:
+                header_end = content.find('\r\n\r\n')
+                break
+            else:
+                content += segment
+                header_end = content.find('\r\n\r\n')
 
         headers = content[:header_end]
         content_length = self.get_content_length(headers)
-        content_type, charset = self.get_content_type(headers)
-        should_trans = self.should_trans(content_type, content_length)
-        if not should_trans:
+        info = self.get_content_type(headers)
+        content_type = charset = None
+        if info:
+            content_type, charset = info
+            should_trans = self.should_trans(content_type, content_length, headers)
+        else:
+            should_trans = False
+        remain = content_length - (len(content) - (header_end + 4))
+
+        body = ''
+        if should_trans:
+            body = content[header_end+4:]
+        else:
             self.wfile.write(content)
 
-
-
-        while True:
-            rep = conn.recv(self.us_rbuf if remain == -1 else min(self.us_rbuf, remain))
-            if rep:
-                if content_length == -1:
-                    content += rep
-                    content_length = self.get_content_length(content)
-                if header_end == -1:
-                    header_end = content.find('\r\n\r\n')
-                    if header_end > 0:
-                        if content_type is None:
-                            content_type = self.get_content_type(headers)
-                    elif header_end == 0:
-                        self.wfile.close()
-                        break
-
-                if content_length == -1:
-                    if header_end != -1:
-                        self.wfile.write(content)
-                        self.wfile.close()
-                        break
-                else:
-                    if header_end != -1:
-                        if headers == '':
-                            headers = content[:header_end]
-                            if content_type is None:
-                                content_type, charset = self.get_content_type(headers)
-                            should_trans = self.should_trans(content_type, content_length)
-                            if should_trans > 0:
-                                body += content[header_end+4:]
-                            else:
-                                self.wfile.write(headers)
-                                self.wfile.write('\r\n\r\n')
-                                self.wfile.write(content[header_end+4:])
-                            remain = content_length - (len(content) - (header_end + 4))
-                            del content
-                        else:
-                            remain -= len(rep)
-                            if should_trans > 0:
-                                body += rep
-                            else:
-                                self.wfile.write(rep)
-                        if remain == 0:
-                            break
-                    else:   # content_length 已知， header 没有结束
-                        pass
-            else:
+        while remain > 0:
+            segment = conn.recv(self.us_rbuf if remain == -1 else min(self.us_rbuf, remain))
+            if not segment:
                 break
-        if should_trans > 0:
-            content_type = self.get_content_type(headers)
+            remain -= len(segment)
+            if should_trans:
+                body += segment
+            else:
+                self.wfile.write(segment)
+            conn.close()
+
+        if should_trans:
             if content_type is not None:
                 body = self.trans(content_type, body, charset) or body
             self.wfile.write(headers)
@@ -236,9 +153,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             self.wfile.close()
 
-    def should_trans(self, content_type, content_length):
+    def should_trans(self, content_type, content_length, headers):
         return (self.command in ('REPORT', 'PROPFIND')) and content_length > 0 \
-               and (content_type in ('text/xml', 'text/plain'))
+            and (content_type in ('text/xml', 'text/plain')) \
+            and ('\r\nTransfer-Encoding: chunked' not in headers)
 
     def get_content_type(self, headers):
         begin = headers.find('\r\nContent-Type: ')
