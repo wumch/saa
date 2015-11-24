@@ -92,7 +92,8 @@ class Relayer(BaseRequestHandler):
         if req['host'] is None:
             raise StatusError(400)
 
-        self.us = socket.create_connection((req['host'], req['port']), timeout=self.us_connect_timeout)
+        if self.us is None:
+            self.us = socket.create_connection((req['host'], req['port']), timeout=self.us_connect_timeout)
         usr = self.us.makefile('rb', self.us_rbuf)
         usw = self.us.makefile('wb', self.us_rbuf)
 
@@ -119,7 +120,7 @@ class Relayer(BaseRequestHandler):
                 usw.write(length)
                 if length == '\r\n':
                     break
-                size = int(length.rstrip, 16)
+                size = int(length.rstrip(), 16)
                 if size <= 0:
                     tail = dsr.readline()
                     if tail != '\r\n':
@@ -166,9 +167,6 @@ class Relayer(BaseRequestHandler):
             begin = time.time()
             while time.time() - begin < MAX_TIME:
                 length = usr.readline()
-                if length == '\r\n':
-                    dsw.write(length)
-                    break
                 size = int(length.rstrip(), 16)
                 if size <= 0:
                     tail = usr.readline()
@@ -176,13 +174,13 @@ class Relayer(BaseRequestHandler):
                         raise StatusError(500)
                     dsw.write(tail)
                     break
-                chunk = usr.read(size)
-                if not chunk or len(chunk) != size:
+                chunk = usr.read(size + 2)
+                if not chunk or len(chunk) != size + 2:
                     break
                 if should_trans:
-                    chunk = self.trans(rep['mime'], chunk, rep['charset'])
+                    chunk = self.trans(rep['mime'], chunk.rstrip(), rep['charset'])
                     if chunk is not None:
-                        length = str(len(chunk)) + '\r\n'
+                        length = hex(len(chunk))[2:] + '\r\n'
                 dsw.write(length)
                 dsw.write(chunk + '\r\n')
         dsw.flush()
