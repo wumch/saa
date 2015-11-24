@@ -3,11 +3,11 @@
 
 import sys
 sys.path.append('/data/code/wumch')
-import socket
+import string
 import urlparse
 import time
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
-from SocketServer import ThreadingMixIn, ThreadingTCPServer
+import socket
+from SocketServer import ThreadingTCPServer, BaseRequestHandler
 import xml.dom.minidom as Dom
 from pyage.tracer import Tracer
 
@@ -18,54 +18,51 @@ class StatusError(Exception):
         self.code = code
 
 
-class Relayer(ThreadingTCPServer):
+class Relayer(BaseRequestHandler):
 
     aliases = {}
 
-    def __init__(self, *args, **kwargs):
-        self.close_connection = 0
+    def __init__(self, ds, ds_addr, server):
+        """
+        :param ds: socket._socketobject
+        :param ds_addr: tuple
+        :param server:
+        :return:
+        """
         self.keep_alive = False
         self.us_request_timeout = 30
         self.us_connect_timeout = 30
         self.us_rbuf = 256 << 10
+        self.us_wbuf = 256 << 10
         self.ds_rbuf = 256 << 10
-        self.upconn = None
-        ThreadingTCPServer.__init__(self, *args, **kwargs)
+        self.ds_wbuf = 256 << 10
+        self.us = None
+        self.ds = ds
+        BaseRequestHandler.__init__(self, ds, ds_addr, server)
 
-    def relay(self):
+    def handle(self):
         try:
-            dest = self.headers.get('Host')
-            if not dest:
-                raise ValueError
-            addr = dest.split(':')
-            port = int(addr[1]) if len(addr) == 2 else 80
-            return self._relay(addr[0], port)
+            return self.relay()
         except StatusError, e:
             print('error, status code:[%d]' % e.code)
             print(Tracer().trace_exception())
-            self.send_error(e.code)
+            # self.send_error(e.code)
         except ValueError, e:
             print('ValueError(%s)' % e.message)
             print(Tracer().trace_exception())
-            self.send_error(402)
+            # self.send_error(402)
         except socket.timeout, e:
             print('socket timeout(%s)' % e.message)
             print(Tracer().trace_exception())
-            self.send_error(500)
+            # self.send_error(500)
         except Exception, e:
             print('Exception(%s)' % e.message)
             print(Tracer().trace_exception())
-            self.send_error(500)
-
-    def filter_headers(self, headers):
-        for name in ('connection', 'keep-alive', 'proxy-authenticate',
-                'proxy-authorization', 'proxy-connection', 'te', 'trailers',
-                'upgrade', 'Proxy-Connection'):
-            if name in headers:
-                del headers[name]
+            # self.send_error(500)
 
     def log_error(self, format, *args):
-        self.log_message(format, *args)
+        print(Tracer().trace())
+        # self.log_message(format, *args)
 
     def trans(self, mime, body, charset):
         if mime == 'text/xml':
@@ -73,113 +70,131 @@ class Relayer(ThreadingTCPServer):
         elif mime == 'text/plain':
             return self.trans_text(body, charset)
 
-    def _relay(self, host, port):
+    def relay(self):
         """
         :param req: ProxyRequestHandler
         """
-        self.close_connection = 0
-        self.upconn = socket.create_connection((host, port), timeout=self.us_connect_timeout)
+        dsr = self.ds.makefile('rb', self.ds_rbuf)
+        dsw = self.ds.makefile('wb', self.ds_wbuf)
+
+        MAX_TIME = 600
+        begin = time.time()
         req_headers = []
-        url = urlparse.urlsplit(self.path)
+        while time.time() - begin < MAX_TIME:     # 接收 header
+            line = dsr.readline()
+            if not line:
+                raise StatusError(500)
+            req_headers.append(line)
+            if line == '\r\n':
+                break
+
+        req = self.analysis_header(req_headers)
+        if req['host'] is None:
+            raise StatusError(400)
+
+        self.us = socket.create_connection((req['host'], req['port']), timeout=self.us_connect_timeout)
+        usr = self.us.makefile('rb', self.us_rbuf)
+        usw = self.us.makefile('wb', self.us_rbuf)
+
+        url = urlparse.urlsplit(req['path'])
         path = (url.path + '?' + url.query) if url.query else url.path
-        req_headers.append('%s %s %s\r\n' % (self.command, path, self.protocol_version))
-        for line in self.headers.headers:
-            if line.startswith('Proxy-Connection: '):
-                if line[18:].strip().lower() == 'keep-alive':
-                    req_headers.append('Connection: keep-alive')
-            else:
-                req_headers.append(line)
-        self.upconn.send(''.join(req_headers))
-        self.upconn.send('\r\n')   # for simple
+        req_headers[0] = ('%s %s %s\r\n' % (req['method'], path, req['version']))
+        if req['keep-alive']:
+            req_headers[req['keep-alive-index']] = 'Connection: keep-alive\r\n'
+        usw.write(''.join(req_headers))
         # del req_headers[:]
-        chunked = self.headers.get('Transfer-Encoding') == 'chunked'
-        content_length = int(self.headers.get('Content-Length', 0))
-        print('request-headers(%s):\n[%s]' % (self.command, ''.join(self.headers.headers)))
+        content_length = req['content-length']
         if content_length:
             if content_length < self.ds_rbuf:
-                self.upconn.send(self.rfile.read(content_length))
+                usw.write(dsr.read(content_length))
             else:
-                while content_length > 0:
-                    self.upconn.send(self.rfile.read(min(content_length, self.ds_rbuf)))
+                while req['content-length'] > 0:
+                    usw.write(dsr.read(min(content_length, self.ds_rbuf)))
                     content_length -= self.ds_rbuf
-        elif chunked:
+        elif req['chunked']:
             MAX_TIME = 600
             begin = time.time()
             while time.time() - begin < MAX_TIME:
-                length = self.rfile.readline()
-                size = length.rstrip()
-                size = int(size, 16)
-                self.upconn.send(length)
+                length = dsr.readline()
+                usw.write(length)
+                if length == '\r\n':
+                    break
+                size = int(length.rstrip, 16)
                 if size <= 0:
-                    tail = self.rfile.readline()
+                    tail = dsr.readline()
                     if tail != '\r\n':
                         raise StatusError(400)
-                    self.upconn.send(tail)
+                    usw.write(tail)
                     break
-                chunk = self.rfile.read(size + 2)
+                chunk = dsr.read(size + 2)
                 if not chunk or len(chunk) != size + 2:
                     raise StatusError(500)
-                self.upconn.send(chunk)
+                usw.write(chunk)
+        usw.flush()
 
-        usrfile = self.upconn.makefile('rb', self.us_rbuf)
         MAX_TIME = 600
         begin = time.time()
-        headers = []
+        rep_headers = []
         while time.time() - begin < MAX_TIME:     # 接收 header
-            line = usrfile.readline()
+            line = usr.readline()
             if not line:
                 raise StatusError(500)
             elif line == '\r\n':
-                headers.append(line)
+                rep_headers.append(line)
                 break
-            headers.append(line)
+            rep_headers.append(line)
 
-        status, mime, charset, chunked, content_length, content_length_index, \
-            keep_alive, keep_alive_index = self.analysis_header(headers)
-        should_trans = self.should_trans(mime, content_length, chunked) if mime else False
+        rep = self.analysis_header(rep_headers)
+        should_trans = self.should_trans(req['method'], rep['mime'], rep['content-length'], rep['chunked'])
         # if keep_alive:
-        #     headers[keep_alive_index] = 'Connection: close'
-
+        #     rep_headers[keep_alive_index] = 'Connection: close'
+        content_length = rep['content-length']
         if content_length:
             if should_trans:
-                origin_body = usrfile.read(content_length)
-                body = self.trans(mime, origin_body, charset)
+                origin_body = usr.read(content_length)
+                body = self.trans(rep['mime'], origin_body, rep['charset'])
                 if body is not None:
-                    headers[content_length_index] = 'Content-Length: ' + str(len(body)) + '\r\n'
-                self.wfile.write(''.join(headers))
-                self.wfile.write(body)
+                    rep_headers[rep['content-length-index']] = 'Content-Length: ' + str(len(body)) + '\r\n'
+                dsw.write(''.join(rep_headers))
+                dsw.write(body)
             else:
-                self.wfile.write(''.join(headers))
-                self.wfile.write(usrfile.read(content_length))
-        elif chunked:   # NOTE: 暂时要求 每个chunk 必须是一个完整的xml
-            self.wfile.write(''.join(headers))
+                dsw.write(''.join(rep_headers))
+                dsw.write(usr.read(content_length))
+        elif rep['chunked']:   # NOTE: 暂时要求 每个chunk 必须是一个完整的xml
+            dsw.write(''.join(rep_headers))
             MAX_TIME = 600
             begin = time.time()
             while time.time() - begin < MAX_TIME:
-                length = usrfile.readline()
-                size = length.rstrip()
-                size = int(size, 16)
+                length = usr.readline()
+                if length == '\r\n':
+                    dsw.write(length)
+                    break
+                size = int(length.rstrip(), 16)
                 if size <= 0:
-                    tail = usrfile.readline()
+                    tail = usr.readline()
                     if tail != '\r\n':
                         raise StatusError(500)
-                    self.wfile.write(tail)
+                    dsw.write(tail)
                     break
-                chunk = usrfile.read(size)
+                chunk = usr.read(size)
                 if not chunk or len(chunk) != size:
                     break
                 if should_trans:
-                    chunk = self.trans(mime, chunk, charset)
+                    chunk = self.trans(rep['mime'], chunk, rep['charset'])
                     if chunk is not None:
                         length = str(len(chunk)) + '\r\n'
-                self.wfile.write(length)
-                self.wfile.write(chunk) + '\r\n'
-        if not keep_alive:
-            self.upconn.close()
+                dsw.write(length)
+                dsw.write(chunk + '\r\n')
+        dsw.flush()
 
-    def should_trans(self, content_type, content_length, chunked):
-        return (self.command in ('REPORT', 'PROPFIND'))         \
-            and (content_type in ('text/xml', 'text/plain'))    \
+        if not rep['keep-alive']:
+            self.us.close()
+        if not req['keep-alive']:
+            self.ds.close()
+
+    def should_trans(self, method, mime, content_length, chunked):
+        return (method in ('REPORT', 'PROPFIND'))         \
+            and (mime in ('text/xml', 'application/xml', 'text/plain', 'application/text'))    \
             and ((content_length <= 4 << 20) if content_length else chunked)
 
     def parse_content_type(self, line):
@@ -190,24 +205,53 @@ class Relayer(ThreadingTCPServer):
         return content_type, charset
 
     def analysis_header(self, headers):
-        index = 0
-        info = [None, None, 'utf-8', None, None, None, None, None]
-        for line in headers:
-            if line.startswith('HTTP/'):
-                status = line.split(' ', 2)
-                if len(status) == 3:
-                    if status[1].isdigit():
-                        info[0] = int(status[1])
+        info = {
+            'status': None,
+            'mime': None,
+            'charset': 'utf-8',
+            'chunked': None,
+            'content-length': None,
+            'content-length-index': None,
+            'keep-alive': None,
+            'keep-alive-index': None,
+            'host': None,
+            'port': 80,
+            'method': None,
+            'path': None,
+            'version': None,
+        }
+        if len(headers) < 1:
+            return info
+        line = headers[0]
+        if line.startswith('HTTP/') or line.startswith('HTTPS/'):
+            status = line.split(' ', 2)
+            if len(status) == 3:
+                if status[1].isdigit():
+                    info['status'] = int(status[1])
+        else:
+            req = line.rstrip().split(' ', 2)
+            if len(req) == 3:
+                info['method'], info['path'], info['version'] = req
+        index = 1
+        for line in headers[1:]:
             if line.startswith('Content-Type: '):
-                info[1], info[2] = self.parse_content_type(line)
+                info['mime'], info['charset'] = self.parse_content_type(line)
             elif line.startswith('Transfer-Encoding: chunked'):
-                info[3] = True
+                info['chunked'] = True
             elif line.startswith('Content-Length: '):
-                info[4] = int(line[16:].strip())
-                info[5] = index
+                info['content-length'] = int(line[16:].strip())
+                info['content-length-index'] = index
             elif line.startswith('Connection: ') and line[12:22].lower() == 'keep-alive':
-                info[6] = True
-                info[7] = index
+                info['keep-alive'] = True
+                info['keep-alive-index'] = index
+            elif line.startswith('Proxy-Connection: ') and line[18:28].lower() == 'keep-alive':
+                info['keep-alive'] = True
+                info['keep-alive-index'] = index
+            elif line.startswith('Host: '):
+                addr = line[6:].strip().split(':')
+                info['host'] = addr[0]
+                if len(addr) == 2:
+                    info['port'] = int(addr[1])
             index += 1
         return info
 
@@ -264,5 +308,4 @@ if __name__ == '__main__':
     Relayer.set_aliases({
         u'wu261': u'吴哥'
     })
-    import thre
     ThreadingTCPServer(('', 3128), Relayer).serve_forever()
