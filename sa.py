@@ -9,7 +9,7 @@ import time
 import socket
 from SocketServer import ThreadingTCPServer, BaseRequestHandler
 import xml.dom.minidom as Dom
-from pyage.tracer import Tracer
+from tracer import Tracer
 
 
 class StatusError(Exception):
@@ -61,7 +61,7 @@ class Relayer(BaseRequestHandler):
             # self.send_error(500)
 
     def log_error(self, format, *args):
-        print(Tracer().trace())
+        print(Tracer().prety())
         # self.log_message(format, *args)
 
     def trans(self, mime, body, charset):
@@ -178,7 +178,7 @@ class Relayer(BaseRequestHandler):
                 if not chunk or len(chunk) != size + 2:
                     break
                 if should_trans:
-                    chunk = self.trans(rep['mime'], chunk.rstrip(), rep['charset'])
+                    chunk = self.trans(rep['mime'], chunk.rstrip(), rep['charset']) or chunk
                     if chunk is not None:
                         length = hex(len(chunk))[2:] + '\r\n'
                 dsw.write(length)
@@ -304,6 +304,9 @@ class Relayer(BaseRequestHandler):
 
 if __name__ == '__main__':
     Relayer.set_aliases({
-        u'wu261': u'吴哥'
+		u'A0433': u'王斌',
+		u'A0433': u'何金玉',
+		u'A1290': u'何金玉',
+        u'A1361': u'吴孟春',
     })
     ThreadingTCPServer(('', 3128), Relayer).serve_forever()
