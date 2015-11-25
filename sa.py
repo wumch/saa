@@ -2,7 +2,7 @@
 # -*- coding:utf-8 -*-
 
 import sys
-sys.path.append('/data/code/wumch')
+sys.path.append('/data/code/wumch/pyage')
 import string
 import urlparse
 import time
@@ -150,7 +150,7 @@ class Relayer(BaseRequestHandler):
         # if keep_alive:
         #     rep_headers[keep_alive_index] = 'Connection: close'
         content_length = rep['content-length']
-        if content_length:
+        if content_length is not None:
             if should_trans:
                 origin_body = usr.read(content_length)
                 body = self.trans(rep['mime'], origin_body, rep['charset'])
@@ -160,7 +160,8 @@ class Relayer(BaseRequestHandler):
                 dsw.write(body)
             else:
                 dsw.write(''.join(rep_headers))
-                dsw.write(usr.read(content_length))
+                if content_length > 0:
+                    dsw.write(usr.read(content_length))
         elif rep['chunked']:   # NOTE: 暂时要求 每个chunk 必须是一个完整的xml
             dsw.write(''.join(rep_headers))
             MAX_TIME = 600
@@ -172,17 +173,19 @@ class Relayer(BaseRequestHandler):
                     tail = usr.readline()
                     if tail != '\r\n':
                         raise StatusError(500)
-                    dsw.write(tail)
+                    dsw.write(length + tail)
                     break
                 chunk = usr.read(size + 2)
                 if not chunk or len(chunk) != size + 2:
                     break
                 if should_trans:
-                    chunk = self.trans(rep['mime'], chunk.rstrip(), rep['charset']) or chunk
+                    chunk = self.trans(rep['mime'], chunk[:-2], rep['charset'])
+                    if chunk is not None:
+                        chunk += '\r\n'
                     if chunk is not None:
                         length = hex(len(chunk))[2:] + '\r\n'
                 dsw.write(length)
-                dsw.write(chunk + '\r\n')
+                dsw.write(chunk)
         dsw.flush()
 
         if not rep['keep-alive']:
@@ -305,8 +308,8 @@ class Relayer(BaseRequestHandler):
 if __name__ == '__main__':
     Relayer.set_aliases({
 		u'A0433': u'王斌',
-		u'A0433': u'何金玉',
 		u'A1290': u'何金玉',
         u'A1361': u'吴孟春',
+        u'wu261': u'wumengchun',
     })
     ThreadingTCPServer(('', 3128), Relayer).serve_forever()
