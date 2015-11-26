@@ -1,5 +1,16 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
+#
+# http-timeout = 3600
+# http-compression = no
+# http-auth-types = basic
+# http-proxy-host = 127.0.0.1
+# http-proxy-port = 3128
+# store-auth-creds = yes
+# store-passwords = yes
+# store-plaintext-passwords = yes
+# ssl-trust-default-ca  = no
+#
 
 import sys
 sys.path.append('/data/code/wumch/pyage')
@@ -310,6 +321,6 @@ if __name__ == '__main__':
 		u'A0433': u'王斌',
 		u'A1290': u'何金玉',
         u'A1361': u'吴孟春',
-        u'wu261': u'wumengchun',
+        u'wu261': u'吴孟春a',
     })
     ThreadingTCPServer(('', 3128), Relayer).serve_forever()
