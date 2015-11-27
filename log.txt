@@ -1,0 +1,26 @@
+hasee dav $ svn up
+正在升级 '.':
+svn: E235000: 文件 “/build/subversion-0NcZK7/subversion-1.8.8/subversion/libsvn_ra_serf/options.c”，行 446：断言失败(SVN_IS_VALID_REVNUM(*youngest))
+已放弃
+内容：
+
+
+HTTP/1.1 200 OK
+Date: Sun, 22 Nov 2015 21:20:34 GMT
+Server: Apache/2.4.7 (Ubuntu)
+DAV: 1,2
+DAV: version-control,checkout,working-resource
+DAV: merge,baseline,activity,version-controlled-collection
+DAV: http://subversion.tigris.org/xmlns/dav/svn/depth
+DAV: http://subversion.tigris.org/xmlns/dav/svn/log-revprops
+DAV: http://subversion.tigris.org/xmlns/dav/svn/atomic-revprops
+DAV: http://subversion.tigris.org/xmlns/dav/svn/partial-replay
+DAV: http://subversion.tigris.org/xmlns/dav/svn/inherited-props
+DAV: http://subversion.tigris.org/xmlns/dav/svn/inline-props
+DAV: http://subversion.tigris.org/xmlns/dav/svn/reverse-file-revs
+DAV: http://subversion.tigris.org/xmlns/dav/svn/mergeinfo
+MS-Author-Via: DAV
+Allow: OPTIONS,GET,HEAD,POST,DELETE,TRACE,PROPFIND,PROPPATCH,COPY,MOVE,LOCK,UNLOCK,CHECKOUT
+Content-Length: 0
+Connection: close
+

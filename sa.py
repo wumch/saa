@@ -17,7 +17,7 @@ import sys
 import time
 import socket
 from SocketServer import ThreadingTCPServer, BaseRequestHandler
-import xml.dom.minidom as Dom
+import xml.sax as sax
 import urlparse
 import codecs
 from tracer import Tracer
@@ -317,6 +317,22 @@ class Relayer(BaseRequestHandler):
         do_PROPFIND = do_REPORT = do_MERGE = relay
 
 
+class XmlHandler(sax.ContentHandler):
+
+    def __init__(self):
+        self.curTag = ''
+        sax.ContentHandler.__init__(self)
+
+    def startElement(self, name, attrs):
+        pass
+
+    def characters(self, content):
+        pass
+
+    def endElement(self, name):
+        pass
+
+
 def get_config():
     import optparse
     parser = optparse.OptionParser(
@@ -340,9 +356,9 @@ def get_aliases(alias_file=None):
         for line in codecs.open(alias_file, encoding='utf-8'):
             line = line.strip()
             if not line.startswith('#'):
-                pair = line.split(',')
+                pair = line.split('=')
                 if len(pair) == 2:
-                    res[pair[0]] = pair[1]
+                    res[pair[0].strip()] = pair[1].strip(' \'"')
     return res
 
 
