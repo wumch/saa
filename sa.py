@@ -12,21 +12,22 @@
 # ssl-trust-default-ca  = no
 #
 
+import os
 import sys
-sys.path.append('/data/code/wumch/pyage')
-import string
-import urlparse
 import time
 import socket
 from SocketServer import ThreadingTCPServer, BaseRequestHandler
 import xml.dom.minidom as Dom
+import urlparse
+import codecs
 from tracer import Tracer
 
 
 class StatusError(Exception):
 
-    def __init__(self, code):
+    def __init__(self, code, message=''):
         self.code = code
+        self.message = message
 
 
 class Relayer(BaseRequestHandler):
@@ -55,7 +56,7 @@ class Relayer(BaseRequestHandler):
         try:
             return self.relay()
         except StatusError, e:
-            print('error, status code:[%d]' % e.code)
+            print('error, status code:[%d]: %s' % (e.code, e.message))
             print(Tracer().trace_exception())
             # self.send_error(e.code)
         except ValueError, e:
@@ -94,14 +95,14 @@ class Relayer(BaseRequestHandler):
         while time.time() - begin < MAX_TIME:     # 接收 header
             line = dsr.readline()
             if not line:
-                raise StatusError(500)
+                raise StatusError(500, 'line is empty')
             req_headers.append(line)
             if line == '\r\n':
                 break
 
         req = self.analysis_header(req_headers)
         if req['host'] is None:
-            raise StatusError(400)
+            raise StatusError(400, 'http header HOST miss')
 
         if self.us is None:
             self.us = socket.create_connection((req['host'], req['port']), timeout=self.us_connect_timeout)
@@ -135,12 +136,12 @@ class Relayer(BaseRequestHandler):
                 if size <= 0:
                     tail = dsr.readline()
                     if tail != '\r\n':
-                        raise StatusError(400)
+                        raise StatusError(400, 'bad chunked tail')
                     usw.write(tail)
                     break
                 chunk = dsr.read(size + 2)
                 if not chunk or len(chunk) != size + 2:
-                    raise StatusError(500)
+                    raise StatusError(500, 'bad chunk')
                 usw.write(chunk)
         usw.flush()
 
@@ -150,7 +151,7 @@ class Relayer(BaseRequestHandler):
         while time.time() - begin < MAX_TIME:     # 接收 header
             line = usr.readline()
             if not line:
-                raise StatusError(500)
+                raise StatusError(500, 'need more line')
             elif line == '\r\n':
                 rep_headers.append(line)
                 break
@@ -183,7 +184,7 @@ class Relayer(BaseRequestHandler):
                 if size <= 0:
                     tail = usr.readline()
                     if tail != '\r\n':
-                        raise StatusError(500)
+                        raise StatusError(500, 'bad chunked tail')
                     dsw.write(length + tail)
                     break
                 chunk = usr.read(size + 2)
@@ -316,11 +317,36 @@ class Relayer(BaseRequestHandler):
         do_PROPFIND = do_REPORT = do_MERGE = relay
 
 
+def get_config():
+    import optparse
+    parser = optparse.OptionParser(
+        usage='%s [-a aliases-file] [-h host] [-p port] [aliases-file]' % sys.argv[0],
+        add_help_option=False,
+    )
+    parser.add_option('--help', action='help', help='show this help and exit')
+    parser.add_option('-h', '--host', dest='host', help='host to listen', default='0.0.0.0')
+    parser.add_option('-p', '--port', dest='port', help='port to listen', default=3128)
+    parser.add_option('-a', '--aliases', dest='aliases', help='svn author aliases file')
+    options, args = parser.parse_args()
+    if options.aliases is None:
+        options.aliases = args[0] if len(args) == 1 else \
+            os.path.join(os.path.dirname(__file__), 'aliases.conf')
+    return options
+
+
+def get_aliases(alias_file=None):
+    res = {}
+    if os.path.isfile(alias_file):
+        for line in codecs.open(alias_file, encoding='utf-8'):
+            line = line.strip()
+            if not line.startswith('#'):
+                pair = line.split(',')
+                if len(pair) == 2:
+                    res[pair[0]] = pair[1]
+    return res
+
+
 if __name__ == '__main__':
-    Relayer.set_aliases({
-		u'A0433': u'王斌',
-		u'A1290': u'何金玉',
-        u'A1361': u'吴孟春',
-        u'wu261': u'吴孟春a',
-    })
-    ThreadingTCPServer(('', 3128), Relayer).serve_forever()
+    options = get_config()
+    Relayer.set_aliases(get_aliases(options.aliases))
+    ThreadingTCPServer((options.host, options.port), Relayer).serve_forever()
