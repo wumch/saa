@@ -206,7 +206,7 @@ class Relayer(BaseRequestHandler):
             self.ds.close()
 
     def should_trans(self, method, mime, content_length, chunked):
-        return (method in ('REPORT', 'PROPFIND'))         \
+        return not not self.aliases and (method in ('REPORT', 'PROPFIND'))         \
             and (mime in ('text/xml', 'application/xml', 'text/plain', 'application/text'))    \
             and ((content_length <= 4 << 20) if content_length else chunked)
 
