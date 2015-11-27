@@ -1,25 +1,14 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-#
-# http-timeout = 3600
-# http-compression = no
-# http-auth-types = basic
-# http-proxy-host = 127.0.0.1
-# http-proxy-port = 3128
-# store-auth-creds = yes
-# store-passwords = yes
-# store-plaintext-passwords = yes
-# ssl-trust-default-ca  = no
-#
 
 import os
 import sys
 import time
 import socket
 from SocketServer import ThreadingTCPServer, BaseRequestHandler
-import xml.sax as sax
 import urlparse
 import codecs
+from xml_handler import XmlHandler
 from tracer import Tracer
 
 
@@ -317,22 +306,6 @@ class Relayer(BaseRequestHandler):
         do_PROPFIND = do_REPORT = do_MERGE = relay
 
 
-class XmlHandler(sax.ContentHandler):
-
-    def __init__(self):
-        self.curTag = ''
-        sax.ContentHandler.__init__(self)
-
-    def startElement(self, name, attrs):
-        pass
-
-    def characters(self, content):
-        pass
-
-    def endElement(self, name):
-        pass
-
-
 def get_config():
     import optparse
     parser = optparse.OptionParser(
@@ -365,4 +338,5 @@ def get_aliases(alias_file=None):
 if __name__ == '__main__':
     options = get_config()
     Relayer.set_aliases(get_aliases(options.aliases))
+    handler = XmlHandler()
     ThreadingTCPServer((options.host, options.port), Relayer).serve_forever()
