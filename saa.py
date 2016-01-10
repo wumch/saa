@@ -8,6 +8,7 @@ import socket
 from SocketServer import ThreadingTCPServer, BaseRequestHandler
 import urlparse
 import codecs
+from xml import sax
 from xml_handler import XmlHandler
 from tracer import Tracer
 
@@ -25,10 +26,9 @@ class Relayer(BaseRequestHandler):
 
     def __init__(self, ds, ds_addr, server):
         """
-        :param ds: socket._socketobject
-        :param ds_addr: tuple
-        :param server:
-        :return:
+        :type parser: xml.sax.expatreader.ExpatParser
+        :type ds: socket._socketobject
+        :type ds_addr: tuple
         """
         self.keep_alive = False
         self.us_request_timeout = 30
@@ -102,7 +102,10 @@ class Relayer(BaseRequestHandler):
         path = (url.path + '?' + url.query) if url.query else url.path
         req_headers[0] = ('%s %s %s\r\n' % (req['method'], path, req['version']))
         if req['keep-alive']:
-            req_headers[req['keep-alive-index']] = 'Connection: keep-alive\r\n'
+            if req['keep-alive-index']:
+                del req_headers[req['keep-alive-index']]
+            if req['connection-index']:
+                req_headers[req['connection-index']] = 'Connection: close\r\n'
         usw.write(''.join(req_headers))
         # del req_headers[:]
         content_length = req['content-length']
@@ -147,18 +150,32 @@ class Relayer(BaseRequestHandler):
             rep_headers.append(line)
 
         rep = self.analysis_header(rep_headers)
+        if rep['keep-alive']:
+            if rep['keep-alive-index']:
+                del rep_headers[rep['keep-alive-index']]
+            if rep['connection-index']:
+                rep_headers[rep['connection-index']] = 'Connection: close\r\n'
+
         should_trans = self.should_trans(req['method'], rep['mime'], rep['content-length'], rep['chunked'])
+
+        parser = None
+        if should_trans:
+            parser = sax.make_parser()
+            handler = XmlHandler(out=dsw, chunked=not not rep['chunked'],
+                 aliases=self.aliases, headers=rep_headers,
+                 content_length_index=rep['content-length-index'],
+                 encoding=rep['charset'])
+            parser.setContentHandler(handler)
+
         # if keep_alive:
         #     rep_headers[keep_alive_index] = 'Connection: close'
         content_length = rep['content-length']
         if content_length is not None:
             if should_trans:
                 origin_body = usr.read(content_length)
-                body = self.trans(rep['mime'], origin_body, rep['charset'])
-                if body is not None:
-                    rep_headers[rep['content-length-index']] = 'Content-Length: ' + str(len(body)) + '\r\n'
-                dsw.write(''.join(rep_headers))
-                dsw.write(body)
+                # parser.feed(origin_body.decode(rep['charset']))
+                parser.feed(origin_body)
+                parser.getContentHandler().flush()
             else:
                 dsw.write(''.join(rep_headers))
                 if content_length > 0:
@@ -180,19 +197,12 @@ class Relayer(BaseRequestHandler):
                 if not chunk or len(chunk) != size + 2:
                     break
                 if should_trans:
-                    chunk = self.trans(rep['mime'], chunk[:-2], rep['charset'])
-                    if chunk is not None:
-                        chunk += '\r\n'
-                    if chunk is not None:
-                        length = hex(len(chunk))[2:] + '\r\n'
-                dsw.write(length)
-                dsw.write(chunk)
+                    parser.feed(chunk)
+                    parser.getContentHandler().flush()
+                else:
+                    dsw.write(length)
+                    dsw.write(chunk)
         dsw.flush()
-
-        if not rep['keep-alive']:
-            self.us.close()
-        if not req['keep-alive']:
-            self.ds.close()
 
     def should_trans(self, method, mime, content_length, chunked):
         return not not self.aliases and (method in ('REPORT', 'PROPFIND'))         \
@@ -216,6 +226,7 @@ class Relayer(BaseRequestHandler):
             'content-length-index': None,
             'keep-alive': None,
             'keep-alive-index': None,
+            'connection-index': None,
             'host': None,
             'port': 80,
             'method': None,
@@ -244,6 +255,9 @@ class Relayer(BaseRequestHandler):
                 info['content-length'] = int(line[16:].strip())
                 info['content-length-index'] = index
             elif line.startswith('Connection: ') and line[12:22].lower() == 'keep-alive':
+                info['keep-alive'] = True
+                info['connection-index'] = index
+            elif line.startswith('Keep-Alive: '):
                 info['keep-alive'] = True
                 info['keep-alive-index'] = index
             elif line.startswith('Proxy-Connection: ') and line[18:28].lower() == 'keep-alive':
@@ -319,7 +333,8 @@ def get_config():
     options, args = parser.parse_args()
     if options.aliases is None:
         options.aliases = args[0] if len(args) == 1 else \
-            os.path.join(os.path.dirname(__file__), 'aliases.conf')
+            os.path.join(os.path.dirname(__file__), 'aliases')
+    options.port = int(options.port)
     return options
 
 
@@ -337,6 +352,6 @@ def get_aliases(alias_file=None):
 
 if __name__ == '__main__':
     options = get_config()
-    Relayer.set_aliases(get_aliases(options.aliases))
-    handler = XmlHandler()
+    aliases = get_aliases(options.aliases)
+    Relayer.set_aliases(aliases)
     ThreadingTCPServer((options.host, options.port), Relayer).serve_forever()
