@@ -70,7 +70,12 @@ class XmlHandler(XMLGenerator):
         self.content += content.encode(self._encoding) \
             if isinstance(content, unicode) else content
 
-    def flush(self):
+    def flush(self, tail):
+        if tail and self.content and self.content[-1] != '\n':
+            if tail == '\r\n':
+                self.content += tail
+            elif tail[-1] == '\n':
+                self.content += '\n'
         if self.chunked:
             self.out.write(hex(len(self.content)) + '\r\n')
         else:
@@ -80,6 +85,8 @@ class XmlHandler(XMLGenerator):
                 % len(self.content)
             self.out.write(''.join(self.headers))
         self.out.write(self.content)
+        self.out.flush()
+        self.content = ''
 
 
 if __name__ == '__main__':

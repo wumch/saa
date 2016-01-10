@@ -164,7 +164,8 @@ class Relayer(BaseRequestHandler):
                 origin_body = usr.read(content_length)
                 # parser.feed(origin_body.decode(rep['charset']))
                 parser.feed(origin_body)
-                parser.getContentHandler().flush()
+                parser.getContentHandler().flush(
+                    origin_body[-2:] if len(origin_body) >= 2 else None)
             else:
                 dsw.write(''.join(rep_headers))
                 if content_length > 0:
@@ -187,7 +188,8 @@ class Relayer(BaseRequestHandler):
                     break
                 if should_trans:
                     parser.feed(chunk)
-                    parser.getContentHandler().flush()
+                    parser.getContentHandler().flush(
+                        chunk[-2:] if len(chunk) >=2 else None)
                 else:
                     dsw.write(length)
                     dsw.write(chunk)
