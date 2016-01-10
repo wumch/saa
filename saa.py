@@ -26,7 +26,6 @@ class Relayer(BaseRequestHandler):
 
     def __init__(self, ds, ds_addr, server):
         """
-        :type parser: xml.sax.expatreader.ExpatParser
         :type ds: socket._socketobject
         :type ds_addr: tuple
         """
@@ -61,27 +60,14 @@ class Relayer(BaseRequestHandler):
             print(Tracer().trace_exception())
             # self.send_error(500)
 
-    def log_error(self, format, *args):
-        print(Tracer().prety())
-        # self.log_message(format, *args)
-
-    def trans(self, mime, body, charset):
-        if mime == 'text/xml':
-            return self.trans_xml(body, charset)
-        elif mime == 'text/plain':
-            return self.trans_text(body, charset)
-
     def relay(self):
-        """
-        :param req: ProxyRequestHandler
-        """
         dsr = self.ds.makefile('rb', self.ds_rbuf)
         dsw = self.ds.makefile('wb', self.ds_wbuf)
 
-        MAX_TIME = 600
+        max_time = 600
         begin = time.time()
         req_headers = []
-        while time.time() - begin < MAX_TIME:     # 接收 header
+        while time.time() - begin < max_time:     # 接收 header
             line = dsr.readline()
             if not line:
                 raise StatusError(500, 'line is empty')
@@ -94,13 +80,15 @@ class Relayer(BaseRequestHandler):
             raise StatusError(400, 'http header HOST miss')
 
         if self.us is None:
-            self.us = socket.create_connection((req['host'], req['port']), timeout=self.us_connect_timeout)
+            self.us = socket.create_connection((req['host'], req['port']),
+                timeout=self.us_connect_timeout)
         usr = self.us.makefile('rb', self.us_rbuf)
         usw = self.us.makefile('wb', self.us_rbuf)
 
         url = urlparse.urlsplit(req['path'])
         path = (url.path + '?' + url.query) if url.query else url.path
-        req_headers[0] = ('%s %s %s\r\n' % (req['method'], path, req['version']))
+        req_headers[0] = ('%s %s %s\r\n' % (req['method'], path,
+            req['version']))
         if req['keep-alive']:
             if req['keep-alive-index']:
                 del req_headers[req['keep-alive-index']]
@@ -117,9 +105,9 @@ class Relayer(BaseRequestHandler):
                     usw.write(dsr.read(min(content_length, self.ds_rbuf)))
                     content_length -= self.ds_rbuf
         elif req['chunked']:
-            MAX_TIME = 600
+            max_time = 600
             begin = time.time()
-            while time.time() - begin < MAX_TIME:
+            while time.time() - begin < max_time:
                 length = dsr.readline()
                 usw.write(length)
                 if length == '\r\n':
@@ -137,10 +125,10 @@ class Relayer(BaseRequestHandler):
                 usw.write(chunk)
         usw.flush()
 
-        MAX_TIME = 600
+        max_time = 600
         begin = time.time()
         rep_headers = []
-        while time.time() - begin < MAX_TIME:     # 接收 header
+        while time.time() - begin < max_time:     # 接收 header
             line = usr.readline()
             if not line:
                 raise StatusError(500, 'need more line')
@@ -156,7 +144,8 @@ class Relayer(BaseRequestHandler):
             if rep['connection-index']:
                 rep_headers[rep['connection-index']] = 'Connection: close\r\n'
 
-        should_trans = self.should_trans(req['method'], rep['mime'], rep['content-length'], rep['chunked'])
+        should_trans = self.should_trans(req['method'], rep['mime'],
+            rep['content-length'], rep['chunked'])
 
         parser = None
         if should_trans:
@@ -180,11 +169,11 @@ class Relayer(BaseRequestHandler):
                 dsw.write(''.join(rep_headers))
                 if content_length > 0:
                     dsw.write(usr.read(content_length))
-        elif rep['chunked']:   # NOTE: 暂时要求 每个chunk 必须是一个完整的xml
+        elif rep['chunked']:
             dsw.write(''.join(rep_headers))
-            MAX_TIME = 600
+            max_time = 600
             begin = time.time()
-            while time.time() - begin < MAX_TIME:
+            while time.time() - begin < max_time:
                 length = usr.readline()
                 size = int(length.rstrip(), 16)
                 if size <= 0:
@@ -205,8 +194,9 @@ class Relayer(BaseRequestHandler):
         dsw.flush()
 
     def should_trans(self, method, mime, content_length, chunked):
-        return not not self.aliases and (method in ('REPORT', 'PROPFIND'))         \
-            and (mime in ('text/xml', 'application/xml', 'text/plain', 'application/text'))    \
+        return not not self.aliases and (method in ('REPORT', 'PROPFIND'))     \
+            and (mime in ('text/xml', 'application/xml', 'text/plain',
+                'application/text'))    \
             and ((content_length <= 4 << 20) if content_length else chunked)
 
     def parse_content_type(self, line):
@@ -254,13 +244,15 @@ class Relayer(BaseRequestHandler):
             elif line.startswith('Content-Length: '):
                 info['content-length'] = int(line[16:].strip())
                 info['content-length-index'] = index
-            elif line.startswith('Connection: ') and line[12:22].lower() == 'keep-alive':
+            elif line.startswith('Connection: ') and line[12:22].lower() \
+                    == 'keep-alive':
                 info['keep-alive'] = True
                 info['connection-index'] = index
             elif line.startswith('Keep-Alive: '):
                 info['keep-alive'] = True
                 info['keep-alive-index'] = index
-            elif line.startswith('Proxy-Connection: ') and line[18:28].lower() == 'keep-alive':
+            elif line.startswith('Proxy-Connection: ') and line[18:28].lower() \
+                    == 'keep-alive':
                 info['keep-alive'] = True
                 info['keep-alive-index'] = index
             elif line.startswith('Host: '):
@@ -282,36 +274,6 @@ class Relayer(BaseRequestHandler):
         {'name': 'D:creator-displayname'}
     ]
 
-    def trans_xml(self, xml, charset):
-        try:
-            dom = Dom.parseString(xml)  # TODO: sax..
-            for rule in self.rules:
-                if 'prop' in rule:
-                    self.trans_by_name_prop(dom, rule['name'], *rule['prop'])
-                else:
-                    self.trans_by_name(dom, rule['name'])
-            transed = dom.toxml(charset)
-            return transed.replace('encoding=""utf-8""', 'encoding="utf-8"', 1) \
-                if 'encoding=""utf-8""' in transed else transed
-        except Exception, e:
-            pass
-
-    def trans_by_name(self, dom, name):
-        for element in dom.getElementsByTagName(name):
-            if element.firstChild.nodeType == element.TEXT_NODE:
-                element.firstChild.nodeValue = self.aliases.get(
-                    element.firstChild.nodeValue,
-                    element.firstChild.nodeValue)
-
-    def trans_by_name_prop(self, dom, name, prop_name, prop_value):
-        for element in dom.getElementsByTagName(name):
-            if element.getAttribute(prop_name) == prop_value and \
-                    element.firstChild.nodeType == element.TEXT_NODE:
-                element.firstChild.nodeValue = self.aliases.get(
-                    element.firstChild.nodeValue,
-                    element.firstChild.nodeValue)
-
-
     @classmethod
     def set_aliases(cls, aliases):
         cls.aliases = aliases
@@ -323,13 +285,16 @@ class Relayer(BaseRequestHandler):
 def get_config():
     import optparse
     parser = optparse.OptionParser(
-        usage='%s [-a aliases-file] [-h host] [-p port] [aliases-file]' % sys.argv[0],
-        add_help_option=False,
-    )
-    parser.add_option('--help', action='help', help='show this help and exit')
-    parser.add_option('-h', '--host', dest='host', help='host to listen', default='0.0.0.0')
-    parser.add_option('-p', '--port', dest='port', help='port to listen', default=3128)
-    parser.add_option('-a', '--aliases', dest='aliases', help='svn author aliases file')
+        usage='%s [-a aliases-file] [-h host] [-p port] [aliases-file]' \
+            % sys.argv[0], add_help_option=False)
+    parser.add_option('--help', action='help',
+        help='show this help and exit')
+    parser.add_option('-h', '--host', dest='host', default='0.0.0.0',
+        help='host to listen')
+    parser.add_option('-p', '--port', dest='port', default=3128,
+        help='port to listen')
+    parser.add_option('-a', '--aliases', dest='aliases',
+        help='svn author aliases file')
     options, args = parser.parse_args()
     if options.aliases is None:
         options.aliases = args[0] if len(args) == 1 else \

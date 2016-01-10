@@ -14,8 +14,12 @@ class XmlHandler(XMLGenerator):
         {'name': 'creator-displayname'},
     ]
 
-    def __init__(self, out, chunked, aliases, headers, content_length_index=None, encoding='utf-8'):
-        self.aliases = aliases
+    def __init__(self, out, chunked, aliases, headers,
+            content_length_index=None, encoding='utf-8'):
+        self.aliases = {}
+        for account, name in aliases.iteritems():
+            self.aliases[account] = name.encode('utf-8') \
+                if isinstance(name, unicode) else name
         self.rules = self.build_rules()
         self.trans = False
         self.chunked = chunked
@@ -96,7 +100,8 @@ if __name__ == '__main__':
     </D:prop>
 </D:merge>
     '''
-    handler = XmlHandler(out=open('/tmp/a.xml', 'w+'), aliases={'wu261': u'吴哥'})
+    handler = XmlHandler(out=open('/tmp/a.xml', 'w+'), chunked=False,
+        aliases={'wu261': u'吴哥'}, headers=[])
     parser = sax.make_parser()
     parser.setContentHandler(handler)
     parser.feed(xml.strip())
