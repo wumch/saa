@@ -11,7 +11,6 @@ class XmlHandler(XMLGenerator):
         {'name': 'set-prop', 'attrs': {'name': 'svn:entry:last-author'}},
         {'name': 'rev-prop', 'attrs': {'name': 'svn:author'}},
         {'name': 'creator-displayname'},
-        {'name': 'creator-displayname'},
     ]
 
     def __init__(self, out, chunked, aliases, headers,
@@ -30,7 +29,6 @@ class XmlHandler(XMLGenerator):
         self._write = self.write
         self._flush = self.flush
         self.content = ''
-        self.doc_tag = None
 
     # todo: 为了性能，这里暂时只支持 name => attr,
     # 而且不允许 同名tag不同rule，但是配置支持这种rule
@@ -48,45 +46,42 @@ class XmlHandler(XMLGenerator):
         return rules
 
     def startElement(self, name, attrs):
-        if self.doc_tag is None:
-            self.doc_tag = name
         pos = name.find(':')
         tag = name if pos == -1 else name[pos+1:]
-        attr = self.rules.get(tag, False)
+        attr = self.rules.get(tag)
         XMLGenerator.startElement(self, name, attrs)
-        if attr is not False:
-            if attr is True:
-                self.trans = True
-            else:
-                self.trans = attrs.get(attr[0]) == attr[1]
-        else:
+        if attr is None:
             self.trans = False
+        elif attr is True:
+            self.trans = True
+        else:
+            self.trans = attrs.get(attr[0]) == attr[1]
 
     def characters(self, content):
-        XMLGenerator.characters(self, self.aliases.get(content.strip(), content)
-            if self.trans else content)
+        XMLGenerator.characters(self, self.aliases.get(content.strip(),
+            content) if self.trans else content)
 
     def write(self, content):
         self.content += content.encode(self._encoding) \
             if isinstance(content, unicode) else content
 
     def flush(self, tail):
-        if tail and self.content and self.content[-1] != '\n':
-            if tail == '\r\n':
-                self.content += tail
-            elif tail[-1] == '\n':
-                self.content += '\n'
+        self.content = self.content.replace('\n', '').rstrip() + '\r\n'
+        if False and tail and tail[-1] == '\n' and \
+                self.content and self.content[-1] != '\n':
+            if tail[-2] == '\r':
+                self.content += '\r\n'
+            else:
+                self.content += '\r\n'
         if self.chunked:
             self.out.write(hex(len(self.content)) + '\r\n')
         else:
-            if self.content and self.content[-1] != '\n':
-                self.content += '\n'
             self.headers[self.content_length_index] = 'Content-Length: %d\r\n' \
                 % len(self.content)
             self.out.write(''.join(self.headers))
         self.out.write(self.content)
-        self.out.flush()
         self.content = ''
+        self.out.flush()
 
 
 if __name__ == '__main__':
